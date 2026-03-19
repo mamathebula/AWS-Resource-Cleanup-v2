@@ -2,6 +2,39 @@
 
 All-in-one CloudFormation template that cleans up unused AWS resources, tracks how much money was saved, and scans for potential savings — with a built-in CloudWatch dashboard.
 
+## Architecture
+
+```
+                          ┌─────────────────────┐
+                          │   EventBridge Rule   │
+                          │  (every 2 hours)     │
+                          └─────────┬───────────┘
+                                    │
+                                    ▼
+┌───────────────┐       ┌─────────────────────┐       ┌─────────────┐
+│  CloudWatch   │◄──────│  Cleanup Lambda     │──────►│  SNS Topic  │
+│  Metrics      │       │  (delete + track $) │       │  (emails)   │
+└───────┬───────┘       └─────────────────────┘       └─────────────┘
+        │                         │
+        ▼                         ▼
+┌───────────────┐       Deletes: Stacks, EC2, S3,
+│  CloudWatch   │       EBS, Snapshots, EIPs
+│  Dashboard    │
+└───────────────┘
+        ▲
+        │
+┌───────┴───────┐       ┌─────────────────────┐
+│  CloudWatch   │◄──────│  Savings Scanner    │
+│  Metrics      │       │  (scan only, no     │
+└───────────────┘       │   deletes)          │
+                        └─────────┬───────────┘
+                                  │
+                          ┌───────┴───────────┐
+                          │  EventBridge Rule  │
+                          │  (once per day)    │
+                          └───────────────────┘
+```
+
 ## What It Cleans Up
 
 | Resource | Behavior |
@@ -207,9 +240,115 @@ aws cloudformation delete-stack --stack-name aws-resource-cleanup-v2
 
 This removes the Lambda functions, IAM role, SNS topic, EventBridge rules, and the CloudWatch dashboard. CloudWatch metrics and Lambda logs are not deleted automatically — they expire based on retention settings.
 
+## How Much Does This Stack Cost to Run?
+
+| Resource | Cost |
+|----------|------|
+| Cleanup Lambda | Free tier: 1M requests + 400,000 GB-seconds/month. Running every 2 hours = ~360 invocations/month — well within free tier |
+| Savings Scanner Lambda | Runs once/day = ~30 invocations/month — free tier |
+| SNS Email Notifications | Free for email delivery |
+| EventBridge Rules | Free — no charge for scheduled rules |
+| CloudWatch Dashboard | $3.00/month per dashboard (first 3 dashboards are free) |
+| CloudWatch Metrics | Free tier: 10 custom metrics. This stack publishes ~15+ metrics — roughly $0.30/month for the extras |
+| IAM Role | Free |
+
+**Estimated total: $0–$3.30/month** depending on whether you're within free tier limits for dashboards and metrics.
+
 ## Tips
 
 - Set `ExcludeString` to something your team uses consistently, like `prod` or `permanent`
 - Start with a longer `MinRunningTimeHours` (e.g., 24) and reduce once you're comfortable
 - Check CloudWatch Logs at `/aws/lambda/{stack-name}-CleanupFunction` for detailed execution logs
 - The savings scanner runs daily at a fixed rate — check the dashboard the next day for potential savings data
+
+## How to Test Manually
+
+You don't have to wait for the schedule. You can invoke either Lambda manually:
+
+### Test the Cleanup Lambda
+
+1. Go to Lambda → Functions → `{stack-name}-CleanupFunction`
+2. Click Test
+3. Create a test event with `{}` as the body
+4. Click Test again
+5. Check the execution log for what was deleted/protected
+
+### Test the Savings Scanner
+
+1. Go to Lambda → Functions → `{stack-name}-SavingsScanner`
+2. Click Test
+3. Create a test event with `{}` as the body
+4. Click Test
+5. Check your email for the potential savings report
+
+### Test via CLI
+
+```bash
+aws lambda invoke \
+  --function-name {stack-name}-CleanupFunction \
+  --payload '{}' \
+  output.json
+```
+
+```bash
+aws lambda invoke \
+  --function-name {stack-name}-SavingsScanner \
+  --payload '{}' \
+  output.json
+```
+
+## Limitations
+
+Things this stack does NOT clean up:
+
+| Resource | Why |
+|----------|-----|
+| NAT Gateways | Not included — can cost $32+/month each. Delete manually |
+| VPC Endpoints | Not included |
+| Route53 Hosted Zones | Not included — could break DNS |
+| CloudFront Distributions | Only deleted if inside a CloudFormation stack |
+| RDS Instances | Only deleted if inside a CloudFormation stack |
+| EKS/ECS Clusters | Only deleted if inside a CloudFormation stack |
+| Lambda Functions | Only deleted if inside a CloudFormation stack (standalone functions are not touched) |
+| DynamoDB Tables | Only deleted if inside a CloudFormation stack |
+| Secrets Manager | Only deleted if inside a CloudFormation stack |
+| Resources in other regions | Only cleans the region it's deployed in |
+
+## Multi-Region
+
+This stack only cleans up resources in the region where it's deployed. If you have resources in multiple regions, deploy the stack in each region:
+
+```bash
+aws cloudformation create-stack \
+  --stack-name aws-resource-cleanup-v2 \
+  --template-body file://aws-resource-cleanup-v2.yaml \
+  --parameters \
+    ParameterKey=NotificationEmail,ParameterValue=your@email.com \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-1
+```
+
+```bash
+aws cloudformation create-stack \
+  --stack-name aws-resource-cleanup-v2 \
+  --template-body file://aws-resource-cleanup-v2.yaml \
+  --parameters \
+    ParameterKey=NotificationEmail,ParameterValue=your@email.com \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region eu-west-1
+```
+
+You'll get a separate dashboard and email notifications per region.
+
+## Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Not getting emails | SNS subscription not confirmed | Check your inbox (and spam) for the confirmation email from AWS. Click the confirm link |
+| Stack not being deleted | Stack name or tag contains `do-not-delete` | Remove the tag or rename the stack |
+| Stack stuck in `DELETE_FAILED` | Resources inside the stack can't be deleted (e.g., non-empty S3 bucket, IAM role in use) | The cleanup will retry with `RetainResources` on the next run. Check CloudWatch Logs for the specific error |
+| Dashboard shows no data | No cleanup has run yet, or no resources to clean | Invoke the Lambda manually (see "How to Test Manually") or wait for the next scheduled run |
+| Potential savings report is empty | All resources are tagged with `do-not-delete` or account is clean | That's a good thing |
+| Lambda times out | Too many resources to process in 900 seconds | Rare — only happens with thousands of resources. Run it more frequently to keep the backlog small |
+| Instances not being terminated | Instance is younger than `MinRunningTimeHours` | Wait for the timer, or lower the parameter value |
+| Protected stack still got deleted | The exclude string check is case-insensitive but must be in the name or a tag value | Make sure `do-not-delete` (or your custom string) is in the stack name or any tag value, not just the tag key |
