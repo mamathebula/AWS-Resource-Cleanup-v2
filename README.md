@@ -198,16 +198,44 @@ After deployment, find the dashboard URL in the stack Outputs tab, or go to:
 
 CloudWatch → Dashboards → `{stack-name}-Dashboard`
 
-The dashboard shows:
+The dashboard has 6 sections:
 
-- Actual monthly savings (from deleted resources)
-- Potential monthly savings (from the daily scanner)
-- Savings breakdown by resource type (EC2, EBS, snapshots, EIPs)
-- Savings trend over time
-- Cleanup activity (daily counts of deleted resources)
-- Protected vs deleted comparison
-- Failed deletions by type
-- Recent activity log
+### Row 1: Summary (top)
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Actual Monthly Savings ($) | Single number | Total dollar amount saved from deleted resources (last 30 days) |
+| Potential Monthly Savings ($) | Single number | How much you could save if unprotected resources were deleted (from daily scanner) |
+| Total Resources Deleted | Single numbers | Count of each resource type deleted: stacks, instances, buckets, volumes, snapshots, EIPs |
+
+### Row 2: Savings Breakdown
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Actual Savings by Type ($) | Pie chart | Breakdown of actual savings: EC2, volumes, snapshots, EIPs |
+| Potential Savings by Type ($) | Pie chart | Breakdown of potential savings by resource type |
+
+### Row 3: Savings Over Time
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Actual Savings Trend | Line graph (daily) | How much was saved each day over time |
+| Potential Savings Trend | Line graph (daily) | How potential savings change day to day |
+
+### Row 4: Cleanup Activity
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Stacks, Instances & Buckets | Line graph (daily) | Daily count of stacks deleted, instances terminated, buckets deleted |
+| Volumes, Snapshots & EIPs | Line graph (daily) | Daily count of volumes, snapshots, and EIPs cleaned up |
+
+### Row 5: Protected vs Deleted
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Stacks: Deleted vs Protected | Bar chart (daily) | Side-by-side comparison of deleted vs protected stacks |
+| Instances: Terminated vs Protected | Bar chart (daily) | Side-by-side comparison of terminated vs protected instances |
+
+### Row 6: Failures & Logs
+| Widget | Type | What It Shows |
+|--------|------|---------------|
+| Failed Deletions by Type | Line graph (daily) | Failed deletions broken down by stacks, EC2, volumes, snapshots |
+| Recent Activity | Log table | Last 30 log entries showing terminated, deleted, released, and error messages |
 
 ## Cost Estimation
 
