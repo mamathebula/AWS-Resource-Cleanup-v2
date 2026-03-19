@@ -5,34 +5,73 @@ All-in-one CloudFormation template that cleans up unused AWS resources, tracks h
 ## Architecture
 
 ```
-                          ┌─────────────────────┐
-                          │   EventBridge Rule   │
-                          │  (every 2 hours)     │
-                          └─────────┬───────────┘
-                                    │
-                                    ▼
-┌───────────────┐       ┌─────────────────────┐       ┌─────────────┐
-│  CloudWatch   │◄──────│  Cleanup Lambda     │──────►│  SNS Topic  │
-│  Metrics      │       │  (delete + track $) │       │  (emails)   │
-└───────┬───────┘       └─────────────────────┘       └─────────────┘
-        │                         │
-        ▼                         ▼
-┌───────────────┐       Deletes: Stacks, EC2, S3,
-│  CloudWatch   │       EBS, Snapshots, EIPs
-│  Dashboard    │
-└───────────────┘
-        ▲
-        │
-┌───────┴───────┐       ┌─────────────────────┐
-│  CloudWatch   │◄──────│  Savings Scanner    │
-│  Metrics      │       │  (scan only, no     │
-└───────────────┘       │   deletes)          │
-                        └─────────┬───────────┘
-                                  │
-                          ┌───────┴───────────┐
-                          │  EventBridge Rule  │
-                          │  (once per day)    │
-                          └───────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        CloudFormation Stack                         │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────────────┐         ┌──────────────────────┐          │
+│  │  EventBridge Rule    │         │  EventBridge Rule    │          │
+│  │  (default: every     │         │  (default: once      │          │
+│  │   2 hours)           │         │   per day)           │          │
+│  └─────────┬────────────┘         └──────────┬───────────┘          │
+│            │                                  │                      │
+│            ▼                                  ▼                      │
+│  ┌──────────────────────┐         ┌──────────────────────┐          │
+│  │  Cleanup Lambda      │         │  Savings Scanner     │          │
+│  │  (delete + track $)  │         │  (scan only)         │          │
+│  │                      │         │                      │          │
+│  │  Waits 8 hours       │         │  Reports what could  │          │
+│  │  before deleting     │         │  be saved ($)        │          │
+│  │  (configurable)      │         │                      │          │
+│  └──┬──┬──┬──┬──┬──┬───┘          └──┬──┬──┬──┬──┬──────┘          │
+│     │  │  │  │  │  │                  │  │  │  │  │                  │
+│     │  │  │  │  │  │                  │  │  │  │  │                  │
+│     │  │  │  │  │  └──────┐     ┌────┘  │  │  │  │                  │
+│     │  │  │  │  │         ▼     ▼       │  │  │  │                  │
+│     │  │  │  │  │    ┌──────────────┐   │  │  │  │                  │
+│     │  │  │  │  │    │  SNS Topic   │   │  │  │  │                  │
+│     │  │  │  │  │    │  (emails)    │   │  │  │  │                  │
+│     │  │  │  │  │    └──────┬───────┘   │  │  │  │                  │
+│     │  │  │  │  │           │           │  │  │  │                  │
+│     │  │  │  │  │           ▼           │  │  │  │                  │
+│     │  │  │  │  │    ┌──────────────┐   │  │  │  │                  │
+│     │  │  │  │  │    │  Your Email  │   │  │  │  │                  │
+│     │  │  │  │  │    └──────────────┘   │  │  │  │                  │
+│     │  │  │  │  │                       │  │  │  │                  │
+│     │  │  │  │  └───┐  ┌───────────────┘  │  │  │                  │
+│     │  │  │  │      ▼  ▼                  │  │  │                  │
+│     │  │  │  │  ┌──────────────┐          │  │  │                  │
+│     │  │  │  │  │  CloudWatch  │◄─────────┘  │  │                  │
+│     │  │  │  │  │  Metrics     │             │  │                  │
+│     │  │  │  │  └──────┬───────┘             │  │                  │
+│     │  │  │  │         │                     │  │                  │
+│     │  │  │  │         ▼                     │  │                  │
+│     │  │  │  │  ┌──────────────┐             │  │                  │
+│     │  │  │  │  │  CloudWatch  │             │  │                  │
+│     │  │  │  │  │  Dashboard   │             │  │                  │
+│     │  │  │  │  └──────────────┘             │  │                  │
+│     │  │  │  │                               │  │                  │
+│     │  │  │  │  ┌────────────────────────┐   │  │                  │
+│     │  │  │  │  │     IAM Role           │   │  │                  │
+│     │  │  │  │  │  (shared by both       │   │  │                  │
+│     │  │  │  │  │   Lambda functions)    │   │  │                  │
+│     │  │  │  │  └────────────────────────┘   │  │                  │
+│     │  │  │  │                               │  │                  │
+└─────┼──┼──┼──┼───────────────────────────────┼──┼──────────────────┘
+      │  │  │  │                               │  │
+      │  │  │  │    AWS Resources Targeted     │  │
+      ▼  ▼  ▼  ▼                               ▼  ▼
+┌──────────────────────────────────────────────────────────────┐
+│  AWS Resources Targeted (default: delete after 8 hours)     │
+│  Warning email sent 4 hours before deletion                 │
+│                                                              │
+│  CloudFormation Stacks    (force delete after timer)         │
+│  EC2 Instances            (terminate after timer)            │
+│  S3 Buckets               (empty + delete after timer)      │
+│  EBS Volumes              (delete if unattached)             │
+│  EBS Snapshots            (delete if >7 days + no AMI)      │
+│  Elastic IPs              (release if unassociated)          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## What It Cleans Up
