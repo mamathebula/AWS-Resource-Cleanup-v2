@@ -7,7 +7,7 @@ All-in-one CloudFormation template that cleans up unused AWS resources, tracks h
 | Resource | Behavior |
 |----------|----------|
 | CloudFormation Stacks | Force deleted after configurable time (default 8 hours) — disables termination protection, empties S3 buckets, retries failed deletes |
-| EC2 Instances | Terminated after configurable time (pending, running, stopping, stopped) |
+| EC2 Instances | Terminated after configurable time (default 8 hours) — checks all states: pending, running, stopping, stopped |
 | S3 Buckets | Emptied and deleted after configurable time (handles versioned objects) |
 | EBS Volumes | Deleted immediately if unattached (`available` status) |
 | EBS Snapshots | Deleted if older than 7 days and not in use by AMIs |
@@ -212,5 +212,4 @@ This removes the Lambda functions, IAM role, SNS topic, EventBridge rules, and t
 - Set `ExcludeString` to something your team uses consistently, like `prod` or `permanent`
 - Start with a longer `MinRunningTimeHours` (e.g., 24) and reduce once you're comfortable
 - Check CloudWatch Logs at `/aws/lambda/{stack-name}-CleanupFunction` for detailed execution logs
-- The `FORCE_DELETE` environment variable is set to `True` by default — instances are terminated regardless of age
 - The savings scanner runs daily at a fixed rate — check the dashboard the next day for potential savings data
